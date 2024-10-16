@@ -1,0 +1,418 @@
+#include <SPI.h>
+#include <Ethernet.h>
+#define pinoMotor1A 44 
+#define pinoMotor1B 45 
+#define pinoMotor2A 46 
+#define pinoMotor2B 9
+
+
+// Definindo o endereço MAC e IP do Arduino
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }; // Endereço MAC (pode usar qualquer valor)
+IPAddress ip(192, 168, 1, 177); // Defina o IP do Arduino
+
+EthernetServer server(80); // Porta do servidor web (80 é a porta padrão HTTP)
+
+// Definição dos pinos correspondentes aos LEDS (Cômodos e postes)
+const int pinoQuarto = 2;
+const int pinoVaranda = 3;
+const int pinoSala = 4;
+const int pinoCozinha = 5;
+const int pinoBanheiro = 6;
+const int pinoGaragem = 7;
+const int pinoPoste1 = 8;
+const int pinoPoste2 = 9;
+const int pinoLuzVermelhaPerigoSeila = 10;
+
+// Laser, alarme, sensor ultrassônico, chuva e fogo
+const int pinoLaser = 16;   // Pino do laser - BRANCO
+const int pinoEcho = 14;    // Pino Echo do sensor ultrassônico - AZUL
+const int pinoTrigger = 15;  // Pino Trigger do sensor ultrassônico - VERDE
+const int pinoBuzzer = 53;  // Pino do buzzer - ROXO
+
+// LDR
+const int pinoLdrLaser = A0; // Pino que recebe o laser do alarme
+const int pinoLdrPostes = A1; // Pino que recebe luz normal para ver se esta a noite
+
+// DEPENDE SE VAI SER ANALOGICO OU DIGITAL
+const int sensorChuva = 48; // Pino chuva
+const int sensorFogo = 50; // Pino fogo
+// const int pinoAnalogicoChuva = A2;  Pino que detecta agua - CASO USASSE PINO ANALOGICO
+// const int pinoAnalogicoFogo = A3; Pino que detecta fogo - CASO USASSE PINO ANALOGICO
+
+// Variáveis para armazenar o tempo de duração e a distância do sensor ultrassônico
+long duracao;
+int distancia;
+
+// Variáveis do LDR e estado do alarme
+int valorLdrLaser = 0;
+int valorLdrPostes = 0;
+int valorSensorAgua = 0;
+int valorSensorFogo = 0;
+const int limiteLaser = 450;
+const int limitePoste = 900;
+// const int limiteSensorAgua = 500; Caso usasse o pino analogico
+// const int limiteSensorFogo = 975; Caso usasse o pino analogico
+bool estadoDoAlarme = true;  // Estado do alarme, inicialmente ligado
+
+// Variáveis para controlar o estado das luzes
+bool luzQuarto = false;
+bool luzVaranda = false;
+bool luzSala = false;
+bool luzCozinha = false;
+bool luzBanheiro = false;
+bool luzGaragem = false;
+
+void setup() {
+  // Inicializa a comunicação serial e Ethernet
+  Serial.begin(9600);
+  Ethernet.begin(mac, ip);
+  server.begin();
+
+  // Configura os pinos como saídas para as luzes
+  pinMode(pinoQuarto, OUTPUT);
+  pinMode(pinoVaranda, OUTPUT);
+  pinMode(pinoSala, OUTPUT);
+  pinMode(pinoCozinha, OUTPUT);
+  pinMode(pinoBanheiro, OUTPUT);
+  pinMode(pinoGaragem, OUTPUT);
+  pinMode(pinoPoste1, OUTPUT);
+  pinMode(pinoPoste2, OUTPUT);
+
+  // Inicializa todas as luzes desligadas
+  digitalWrite(pinoQuarto, LOW);
+  digitalWrite(pinoVaranda, LOW);
+  digitalWrite(pinoSala, LOW);
+  digitalWrite(pinoCozinha,LOW);
+  digitalWrite(pinoBanheiro, LOW);
+  digitalWrite(pinoGaragem, LOW);
+  digitalWrite(pinoPoste1, LOW);
+  digitalWrite(pinoPoste2, LOW);
+  digitalWrite(pinoBuzzer, LOW);
+
+  // Configura os pinos do LDR, laser, buzzer, sensor ultrassônico, de fogo e chuva
+  pinMode(pinoLdrLaser, INPUT);
+  pinMode(pinoLaser, OUTPUT);
+  pinMode(pinoBuzzer, OUTPUT);
+  pinMode(pinoTrigger, OUTPUT);
+  pinMode(pinoEcho, INPUT);
+  pinMode(sensorChuva, INPUT); 
+  pinMode(sensorFogo, INPUT); 
+  // pinMode(pinoAnalogicoChuva, INPUT); CASO USASSE PINO ANALOGICO
+  // pinMode(pinoAnalogicoFogo, INPUT); CASO USASSE PINO ANALOGICO
+
+  pinMode(pinoMotor1A, OUTPUT);
+  pinMode(pinoMotor1B, OUTPUT);
+  pinMode(pinoMotor2A, OUTPUT);
+  pinMode(pinoMotor2B, OUTPUT);
+
+  Serial.print("Servidor web iniciado. Acesse: ");
+  Serial.println(Ethernet.localIP());
+}
+
+void loop() {
+  // Aguarda conexão de um cliente
+  EthernetClient client = server.available();
+  if (client) {
+    String currentLine = "";
+    while (client.connected()) {
+      if (client.available()) {
+        char c = client.read();
+        if (c == '\n') {
+          if (currentLine.length() == 0) {
+            // Envia a página HTML ao cliente
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-Type: text/html");
+            client.println("Connection: close");
+            client.println();
+
+            // Página HTML com AJAX para evitar recarregamento
+            client.println("<!DOCTYPE html><html>");
+            client.println("<head>");
+            client.println("<meta charset='UTF-8'>");
+            client.println("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
+            client.println("<title>Controle de Luzes e Alarme</title>");
+            client.println("<style>");
+            client.println("body { font-family: Arial, sans-serif; background-color: #f0f0f0; text-align: center; padding: 20px; }");
+            client.println(".container { background-color: #fff; padding: 20px; border-radius: 10px; box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1); max-width: 400px; margin: 0 auto; }");
+            client.println("h1 { color: #333; }");
+            client.println("button { padding: 15px 25px; font-size: 18px; margin: 10px; cursor: pointer; }");
+            client.println(".ligar { background-color: #28a745; color: white; }");
+            client.println(".desligar { background-color: #dc3545; color: white; }");
+            client.println("</style>");
+            client.println("<script>");
+            client.println("function sendCommand(command) {");
+            client.println("  var xhttp = new XMLHttpRequest();");
+            client.println("  xhttp.onreadystatechange = function() {");
+            client.println("    if (this.readyState == 4 && this.status == 200) {");
+            client.println("      console.log('Comando enviado: ' + command);");
+            client.println("      if (command.includes('alarm=Ligar Alarme')) { document.getElementById('statusAlarme').innerHTML = 'Ligado'; }");
+            client.println("      else if (command.includes('alarm=Desligar Alarme')) { document.getElementById('statusAlarme').innerHTML = 'Desligado'; }");
+            client.println("    }");
+            client.println("  };");
+            client.println("  xhttp.open('GET', '/?' + command, true);");
+            client.println("  xhttp.send();");
+            client.println("}");
+            client.println("</script>");
+            client.println("</head>");
+            client.println("<body>");
+            client.println("<div class='container'>");
+            client.println("<h1>Controle de Luzes e Alarme</h1>");
+
+            // Controles para o quarto
+            client.println("<h2>Quarto</h2>");
+            client.println("<button onclick=\"sendCommand('luzQuarto=ligar')\" class='ligar'>Ligar</button>");
+            client.println("<button onclick=\"sendCommand('luzQuarto=desligar')\" class='desligar'>Desligar</button>");
+
+            // Controles para a varanda
+            client.println("<h2>Varanda</h2>");
+            client.println("<button onclick=\"sendCommand('luzVaranda=ligar')\" class='ligar'>Ligar</button>");
+            client.println("<button onclick=\"sendCommand('luzVaranda=desligar')\" class='desligar'>Desligar</button>");
+
+            // Controles para a sala
+            client.println("<h2>Sala</h2>");
+            client.println("<button onclick=\"sendCommand('luzSala=ligar')\" class='ligar'>Ligar</button>");
+            client.println("<button onclick=\"sendCommand('luzSala=desligar')\" class='desligar'>Desligar</button>");
+
+            // Controles para a cozinha
+            client.println("<h2>Cozinha</h2>");
+            client.println("<button onclick=\"sendCommand('luzCozinha=ligar')\" class='ligar'>Ligar</button>");
+            client.println("<button onclick=\"sendCommand('luzCozinha=desligar')\" class='desligar'>Desligar</button>");
+
+            // Controles para o banheiro
+            client.println("<h2>Banheiro</h2>");
+            client.println("<button onclick=\"sendCommand('luzBanheiro=ligar')\" class='ligar'>Ligar</button>");
+            client.println("<button onclick=\"sendCommand('luzBanheiro=desligar')\" class='desligar'>Desligar</button>");
+
+            // Controles para a garagem
+            client.println("<h2>Garagem</h2>");
+            client.println("<button onclick=\"sendCommand('luzGaragem=ligar')\" class='ligar'>Ligar</button>");
+            client.println("<button onclick=\"sendCommand('luzGaragem=desligar')\" class='desligar'>Desligar</button>");
+
+            // Ligar e desligar todas as luzes
+            client.println("<h2>Luz geral</h2>");
+            client.println("<button onclick=\"sendCommand('luzGeral=ligar')\" class='ligar'>Ligar</button>");
+            client.println("<button onclick=\"sendCommand('luzGeral=desligar')\" class='desligar'>Desligar</button>");
+
+            // Controles do alarme
+            client.println("<h2>Alarme</h2>");
+            client.println("<button onclick=\"sendCommand('alarm=Ligar Alarme')\" class='ligar'>Ligar Alarme</button>");
+            client.println("<button onclick=\"sendCommand('alarm=Desligar Alarme')\" class='desligar'>Desligar Alarme</button>");
+            client.println("<p>Status do Alarme: <strong id='statusAlarme'>" + String(estadoDoAlarme ? "Ligado" : "Desligado") + "</strong></p>");
+
+            // Sensor de fogo
+            client.println("<h2>Sensor de Fogo</h2>");
+            client.println("<p>Status do Sensor de Fogo: <strong id='statusFogo'>" + String(valorSensorFogo ? "Sem fogo." : "FOGO DETECTADO!!") + "</strong></p>");
+
+            // Sensor de chuva
+            client.println("<h2>Sensor de Chuva</h2>");
+            client.println("<p>Status do Sensor de Chuva: <strong id='statusChuva'>" + String(valorSensorAgua ? "Sem chuva." : "CHUVA DETECTADA!!") + "</strong></p>");
+            client.println("</div>");
+            client.println("</body></html>");
+            break;
+          }
+          currentLine = "";
+        } else if (c != '\r') {
+          currentLine += c;
+
+          // Verifica qual luz foi acionada
+          if (currentLine.endsWith("GET /?luzQuarto=ligar")) {
+            luzQuarto = true;
+            digitalWrite(pinoQuarto, HIGH);
+          } else if (currentLine.endsWith("GET /?luzQuarto=desligar")) {
+            luzQuarto = false;
+            digitalWrite(pinoQuarto, LOW);
+          } else if (currentLine.endsWith("GET /?luzVaranda=ligar")) {
+            luzVaranda = true;
+            digitalWrite(pinoVaranda, HIGH);
+          } else if (currentLine.endsWith("GET /?luzVaranda=desligar")) {
+            luzVaranda = false;
+            digitalWrite(pinoVaranda, LOW);
+          } else if (currentLine.endsWith("GET /?luzSala=ligar")) {
+            luzSala = true;
+            digitalWrite(pinoSala, HIGH);
+          } else if (currentLine.endsWith("GET /?luzSala=desligar")) {
+            luzSala = false;
+            digitalWrite(pinoSala, LOW);
+          } else if (currentLine.endsWith("GET /?luzCozinha=ligar")) {
+            luzCozinha = true;
+            digitalWrite(pinoCozinha, HIGH);
+          } else if (currentLine.endsWith("GET /?luzCozinha=desligar")) {
+            luzCozinha = false;
+            digitalWrite(pinoCozinha, LOW);
+          } else if (currentLine.endsWith("GET /?luzBanheiro=ligar")) {
+            luzBanheiro = true;
+            digitalWrite(pinoBanheiro, HIGH);
+          } else if (currentLine.endsWith("GET /?luzBanheiro=desligar")) {
+            luzBanheiro = false;
+            digitalWrite(pinoBanheiro, LOW);
+          } else if (currentLine.endsWith("GET /?luzGaragem=ligar")) {
+            luzGaragem = true;
+            digitalWrite(pinoGaragem, HIGH);
+          } else if (currentLine.endsWith("GET /?luzGaragem=desligar")) {
+            luzGaragem = false;
+            digitalWrite(pinoGaragem, LOW);
+          } else if (currentLine.endsWith("GET /?luzGeral=ligar")) {
+            luzQuarto = true;
+            digitalWrite(pinoQuarto, HIGH);
+            luzVaranda = true;
+            digitalWrite(pinoVaranda, HIGH);
+            luzSala = true;
+            digitalWrite(pinoSala, HIGH);
+            luzCozinha = true;
+            digitalWrite(pinoCozinha, HIGH);
+            luzBanheiro = true;
+            digitalWrite(pinoBanheiro, HIGH);
+            luzGaragem = true;
+            digitalWrite(pinoGaragem, HIGH);
+          } else if (currentLine.endsWith("GET /?luzGeral=desligar")) {
+            luzQuarto = false;
+            digitalWrite(pinoQuarto, LOW);
+            luzVaranda = false;
+            digitalWrite(pinoVaranda, LOW);
+            luzSala = false;
+            digitalWrite(pinoSala, LOW);
+            luzCozinha = false;
+            digitalWrite(pinoCozinha, LOW);
+            luzBanheiro = false;
+            digitalWrite(pinoBanheiro, LOW);
+            luzGaragem = false;
+            digitalWrite(pinoGaragem, LOW);
+          } else if (currentLine.endsWith("GET /?alarm=Ligar%20Alarme")) {
+            estadoDoAlarme = true;
+            digitalWrite(pinoBuzzer, HIGH);
+          } else if (currentLine.endsWith("GET /?alarm=Desligar%20Alarme")) {
+            estadoDoAlarme = false;
+            digitalWrite(pinoBuzzer, LOW);
+          }
+        }
+      }
+    }
+    delay(1);
+    client.stop();
+   }
+
+  valorLdrLaser = analogRead(pinoLdrLaser);
+  // O alarme está ligado e LDR esta detectando o laser
+  if (estadoDoAlarme == true && limiteLaser > valorLdrLaser) {
+    Serial.print("Laser detectado! LDR: ");
+    Serial.println(valorLdrLaser);
+    digitalWrite(pinoLaser, HIGH);
+    noTone(pinoBuzzer);
+  // O alarme esta ligado e o LDR não esta detectando o laser
+  } else if (estadoDoAlarme == true && valorLdrLaser > limiteLaser) {
+    Serial.print("Laser interrompido!!! Casa invadida!! LDR: ");
+    Serial.println(valorLdrLaser);
+    digitalWrite(pinoLaser, HIGH);
+    tone(pinoBuzzer, 2000);
+  // Desliga o alarme e o som  
+  } else if(estadoDoAlarme == false){
+    noTone(pinoBuzzer); // Desativa o som do alarme se estiver ligado
+    Serial.print("Alarme desligado. LDR:");
+    Serial.println(valorLdrLaser);
+    digitalWrite(pinoLaser, LOW);
+  }
+
+  valorLdrPostes = analogRead(pinoLdrPostes);
+  // Liga e desliga os postes foras da casa dependendo de quanta luz recebe
+  if (limitePoste > valorLdrPostes){
+    digitalWrite(pinoPoste1,LOW);
+    digitalWrite(pinoPoste2,LOW);
+    Serial.print("Dia, luzes desligadas. Valor do LDR: ");
+    Serial.println(valorLdrPostes);
+  } else if(valorLdrPostes > limitePoste){
+    digitalWrite(pinoPoste1,HIGH);
+    digitalWrite(pinoPoste2,HIGH);
+    Serial.print("Noite, luzes ligadas. Valor do LDR: ");
+    Serial.println(valorLdrPostes);
+  }
+
+  // Detecta chuva e fecha a cortina
+  valorSensorAgua = digitalRead(sensorChuva);
+  // Se o valor recebido de agua não passar o limite == sem chuva
+  if(valorSensorAgua == HIGH){
+    Serial.println("Sem chuva.");
+    // abrir cortina blabla como vco fazer
+  } else if(valorSensorAgua == LOW ){
+    Serial.println("CHUVA DETECTADA!!");
+    // int blabla = cortinaaberta;
+    // Se o valor recebido de agua passar o limite == CHUVA!!
+  }
+
+  // Detector de fogo - Variavel recebe o valor do sensor
+  valorSensorFogo = digitalRead(sensorFogo);
+  // Se o valor recebido estiver a baixo do limite == sem fogo
+  if(valorSensorFogo == LOW){
+    Serial.println("FOGO DETECTADO!!");
+    digitalWrite(pinoLuzVermelhaPerigoSeila, HIGH); // Pisca luz - Aonde vou colocarsapora???
+    digitalWrite(pinoLuzVermelhaPerigoSeila, LOW); // Desliga luz para poder acender quando entrar nesse if novamente
+    tone(pinoBuzzer, 2000);
+  // Se o valor recebido estiver a cima do limite == FOGOOOO!!
+  }else if(valorSensorFogo == HIGH){
+    Serial.println("Sem fogo.");
+    digitalWrite(pinoLuzVermelhaPerigoSeila, LOW);
+    noTone(pinoBuzzer);
+  }
+ 
+  /*  
+  SENSOR PARA ANALOGICO
+  Detector de fogo - Variavel recebe o valor do sensor
+  valorSensorFogo = analogRead(pinoAnalogicoFogo);
+   Se o valor recebido estiver a baixo do limite == sem fogo
+  if(limiteSensorFogo > valorSensorFogo){
+    Serial.print("FOGO DETECTADO!! Valor do sensor em: ");
+    Serial.println(valorSensorFogo);
+    digitalWrite(pinoLuzVermelhaPerigoSeila, HIGH); // Pisca luz - Aonde vou colocarsapora???
+    delay(200);
+    digitalWrite(pinoLuzVermelhaPerigoSeila, LOW); // Desliga luz para poder acender quando entrar nesse if novamente
+    tone(pinoBuzzer, 2000);
+    delay(100);
+   Se o valor recebido estiver a cima do limite == FOGOOOO!!
+  }else if(valorSensorFogo > limiteSensorFogo){
+    Serial.print("Sem fogo. Valor do sensor em: ");
+    Serial.println(valorSensorFogo);
+    digitalWrite(pinoLuzVermelhaPerigoSeila, LOW);
+    noTone(pinoBuzzer);
+  } 
+
+  SENSOR PARA ANALOGICO
+  valorSensorAgua = analogRead(pinoAnalogicoChuva);
+  // Se o valor recebido de agua não passar o limite == sem chuva
+  if(limiteSensorAgua > valorSensorAgua){
+    Serial.print("Sem chuva. Valor do sensor em: ");
+    Serial.println(valorSensorAgua);
+    // int blabla = cortinaaberta;
+    // Se o valor recebido de agua passar o limite == CHUVA!!
+  } else if(valorSensorAgua > limiteSensorAgua){
+    Serial.print("Chovendo!! Valor do sensor em: ");
+    Serial.println(valorSensorAgua);
+  } */
+
+  // Limpa caso tenha algum dado anterior
+  digitalWrite(pinoTrigger, LOW);
+  delayMicroseconds(1);
+
+  // Gera um pulso de 10 microssegundos no pino trigger
+  digitalWrite(pinoTrigger, HIGH); // Inicia o sensor
+  delayMicroseconds(10);
+  digitalWrite(pinoTrigger, LOW); // Finaliza o pulso e mede a distancia
+
+  // Lê o tempo que o pulso leva para voltar (em microssegundos)
+  duracao = pulseIn(pinoEcho, HIGH);
+
+  // Calcula a distância (velocidade do som é 340 m/s ou 0,034 cm/us)
+  distancia = duracao * 0.034 / 2;
+
+  // Exibe a distância no monitor serial
+  if(distancia < 8 || distancia > 16){
+    Serial.print("Distância: ");
+    Serial.print(distancia);
+    Serial.println(" cm");
+    noTone(pinoBuzzer);
+  }else if(distancia >= 8 && distancia <= 16){
+    Serial.print("Movimento detectado a ");
+    Serial.print(distancia);
+    Serial.println(" cm");
+    tone(pinoBuzzer, 2000);
+  }
+  delay(500);
+}
