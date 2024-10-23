@@ -180,7 +180,7 @@ void loop() {
             client.println("}");
         }
         break;
-       else if (currentLine.length() == 0) {
+    } else if (currentLine.length() == 0) {
             client.println("HTTP/1.1 200 OK");
             client.println("Content-Type: text/html");
             client.println("Connection: close");
